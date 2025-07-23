@@ -4,6 +4,7 @@ from discord.ui import View, Select
 import asyncio
 from dotenv import load_dotenv
 import os
+import json
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -14,7 +15,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-ALLOWED_USERS = [381173231069036544]
+USERS_FILE = "users.json"
 
 CHANNELS = {
     'general': 1397412820383043667,
@@ -22,6 +23,18 @@ CHANNELS = {
     'test2': 1397442739838128159,
     'test3': 1397442760738607164,
 }
+
+def load_allowed_users():
+    if not os.path.exists(USERS_FILE):
+        return []
+    with open(USERS_FILE, 'r') as f:
+        return json.load(f)
+    
+def save_allowed_users(users):
+    with open(USERS_FILE, 'w') as f:
+        json.dump(users, f)
+
+ALLOWED_USERS = load_allowed_users()
 class ChannelSelect(Select):
     def __init__(self):
         options = [
@@ -40,6 +53,34 @@ class ChannelView(View):
         super().__init__(timeout=60)
         self.selected_channels = []
         self.add_item(ChannelSelect())
+
+@bot.command(name='adduser')
+@commands.has_permissions(administrator=True)
+async def add_user(ctx, member: discord.Member):
+    if member.id in ALLOWED_USERS:
+        await ctx.send(f"{member.mention} is already allowed to use this command.")
+        return
+
+    ALLOWED_USERS.append(member.id)
+    save_allowed_users(ALLOWED_USERS)
+    await ctx.send(f"{member.mention} has been added to the allowed users list.")
+
+@bot.command(name='removeuser')
+@commands.has_permissions(administrator=True)
+async def remove_user(ctx, member: discord.Member):
+    if member.id not in ALLOWED_USERS:
+        await ctx.send(f"{member.mention} is not in the allowed users list.")
+        return
+
+    ALLOWED_USERS.remove(member.id)
+    save_allowed_users(ALLOWED_USERS)
+    await ctx.send(f"{member.mention} has been removed from the allowed users list.")
+
+@add_user.error
+@remove_user.error
+async def user_command_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("You do not have permission to use this command.")
 
 @bot.command(name='postmessage')
 async def post_message(ctx):
