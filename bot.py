@@ -13,8 +13,6 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
 SCHEDULED_FILE = "scheduled.json"
-PERMISSIONS_FILE = "permissions.json"
-USERS_FILE = "users.json"
 
 CHANNELS = {
     'general': 1397412820383043667,
@@ -29,26 +27,6 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-def load_permissions():
-    if not os.path.exists(PERMISSIONS_FILE):
-        return {"admins": [], "managers": [], "users": {}}
-    with open(PERMISSIONS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_permissions(data):
-    with open(PERMISSIONS_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
-
-def load_allowed_users():
-    if not os.path.exists(USERS_FILE):
-        return []
-    with open(USERS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_allowed_users(users):
-    with open(USERS_FILE, 'w') as f:
-        json.dump(users, f)
-
 def load_scheduled_messages():
     if not os.path.exists(SCHEDULED_FILE):
         return []
@@ -60,20 +38,6 @@ def save_scheduled_messages(scheduled):
         json.dump(scheduled, f, indent=2)
 
 scheduled_messages = load_scheduled_messages()
-permissions = load_permissions()
-ALLOWED_USERS = load_allowed_users()
-
-def is_admin(user_id):
-    return user_id in permissions.get("admins", [])
-
-def is_manager(user_id):
-    return user_id in permissions.get("managers", []) or is_admin(user_id)
-
-def get_user_channels(user_id):
-    return permissions.get("users", {}).get(str(user_id), [])
-
-def can_post_in_channel(user_id, channel_id):
-    return is_admin(user_id) or channel_id in get_user_channels(user_id)
 
 class ChannelSelect(Select):
     def __init__(self, options):
@@ -93,50 +57,16 @@ class ChannelView(View):
         self.selected_channels = []
         self.add_item(ChannelSelect(options))
 
-@bot.command(name='adduser')
-@commands.has_permissions(administrator=True)
-async def add_user(ctx, member: discord.Member):
-    if member.id in ALLOWED_USERS:
-        await ctx.send(f"{member.mention} is already allowed to use this command.")
-        return
-
-    ALLOWED_USERS.append(member.id)
-    save_allowed_users(ALLOWED_USERS)
-    await ctx.send(f"{member.mention} has been added to the allowed users list.")
-
-@bot.command(name='removeuser')
-@commands.has_permissions(administrator=True)
-async def remove_user(ctx, member: discord.Member):
-    if member.id not in ALLOWED_USERS:
-        await ctx.send(f"{member.mention} is not in the allowed users list.")
-        return
-
-    ALLOWED_USERS.remove(member.id)
-    save_allowed_users(ALLOWED_USERS)
-    await ctx.send(f"{member.mention} has been removed from the allowed users list.")
-
-@add_user.error
-@remove_user.error
-async def user_command_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("You do not have permission to use this command.")
-
 @bot.command(name='postmessage')
 async def post_message(ctx):
-    user_id = ctx.author.id
-    if not (is_admin(user_id) or user_id in permissions["users"]):
-        await ctx.send("❌ You are not allowed to post picks.")
-        return
+    allowed_channels = {}
+    for name, cid in CHANNELS.items():
+        channel = bot.get_channel(cid)
+        if isinstance(channel, discord.TextChannel) and channel.permissions_for(ctx.author).send_messages:
+            allowed_channels[name] = cid
 
-    allowed_channel_ids = list(CHANNELS.values()) if is_admin(user_id) else get_user_channels(user_id)
-
-    if not allowed_channel_ids:
-        await ctx.send("⚠️ You don’t have any channels assigned to post in.")
-        return
-
-    allowed_channels = {name: cid for name, cid in CHANNELS.items() if cid in allowed_channel_ids}
     if not allowed_channels:
-        await ctx.send("⚠️ No matching channels found for your permissions.")
+        await ctx.send("⚠️ You don’t have permission to post in any configured channels.")
         return
 
     view = ChannelView(allowed_channels)
@@ -172,19 +102,14 @@ async def post_message(ctx):
 
 @bot.command(name='schedulemessage')
 async def schedule_message(ctx):
-    user_id = ctx.author.id
-    if not (is_admin(user_id) or user_id in permissions["users"]):
-        await ctx.send("❌ You are not allowed to schedule messages.")
-        return
+    allowed_channels = {}
+    for name, cid in CHANNELS.items():
+        channel = bot.get_channel(cid)
+        if isinstance(channel, discord.TextChannel) and channel.permissions_for(ctx.author).send_messages:
+            allowed_channels[name] = cid
 
-    allowed_channel_ids = list(CHANNELS.values()) if is_admin(user_id) else get_user_channels(user_id)
-    if not allowed_channel_ids:
-        await ctx.send("⚠️ You don’t have any channels assigned.")
-        return
-
-    allowed_channels = {name: cid for name, cid in CHANNELS.items() if cid in allowed_channel_ids}
     if not allowed_channels:
-        await ctx.send("⚠️ No matching channels found.")
+        await ctx.send("⚠️ You don’t have permission to post in any configured channels.")
         return
 
     view = ChannelView(allowed_channels)
@@ -222,7 +147,6 @@ async def schedule_message(ctx):
         return
 
     scheduled_messages.append({
-        "user_id": user_id,
         "channel_ids": view.selected_channels,
         "content": content,
         "files": [],
@@ -247,7 +171,7 @@ async def schedule_runner():
             for channel_id in msg["channel_ids"]:
                 channel = bot.get_channel(channel_id)
                 if isinstance(channel, discord.TextChannel):
-                    await channel.send(msg["content"])  # File support can be added here
+                    await channel.send(msg["content"])
             scheduled_messages.remove(msg)
             save_scheduled_messages(scheduled_messages)
 
