@@ -59,7 +59,9 @@ class ScheduleModalWithAttachment(discord.ui.Modal):
             await interaction.response.send_message("❌ Invalid time format. Please use MM/DD/YYYY HH:MM AM/PM format.", ephemeral=True)
             return
 
-        if scheduled_time < datetime.now():
+        current_time = datetime.now()
+        
+        if scheduled_time < current_time:
             await interaction.response.send_message("⏳ You can't schedule something in the past.", ephemeral=True)
             return
 
