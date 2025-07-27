@@ -47,91 +47,11 @@ def save_scheduled_messages(scheduled):
 
 scheduled_messages = load_scheduled_messages()
 
-class ChannelSelect(Select):
-    def __init__(self, options, is_schedule=False):
-        select_options = [discord.SelectOption(label=name, value=str(cid)) for name, cid in options.items()]
-        super().__init__(placeholder="Select channels to post in...", min_values=1, max_values=len(select_options), options=select_options)
-        self.is_schedule = is_schedule
-
-    async def callback(self, interaction: discord.Interaction):
-        view = self.view
-        if view and isinstance(view, ChannelView):
-            selected_channels = [int(v) for v in self.values]
-            modal = ScheduleMessageModal(selected_channels) if self.is_schedule else MessageModal(selected_channels)
-            await interaction.response.send_modal(modal)
-            view.stop()
-
-class MessageModal(discord.ui.Modal):
-    def __init__(self, selected_channels):
-        super().__init__(title="Message Content")
-        self.selected_channels = selected_channels
-        self.message_input = discord.ui.TextInput(
-            label="Message",
-            style=discord.TextStyle.paragraph,
-            placeholder="Type your message here...",
-            required=True,
-            max_length=2000
-        )
-        self.add_item(self.message_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        for channel_id in self.selected_channels:
-            channel = interaction.guild.get_channel(channel_id)
-            if isinstance(channel, discord.TextChannel):
-                await channel.send(self.message_input.value)
-        await interaction.response.send_message("✅ Message posted successfully!", ephemeral=True)
-
-class ScheduleMessageModal(discord.ui.Modal):
-    def __init__(self, selected_channels):
-        super().__init__(title="Schedule Message")
-        self.selected_channels = selected_channels
-        self.message_input = discord.ui.TextInput(
-            label="Message",
-            style=discord.TextStyle.paragraph,
-            placeholder="Type your message here...",
-            required=True,
-            max_length=2000
-        )
-        self.time_input = discord.ui.TextInput(
-            label="Time (MM/DD/YYYY HH:MM AM/PM)",
-            style=discord.TextStyle.short,
-            placeholder="e.g., 07/23/2025 05:30 PM",
-            required=True
-        )
-        self.add_item(self.message_input)
-        self.add_item(self.time_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            scheduled_time = datetime.strptime(self.time_input.value.strip(), "%m/%d/%Y %I:%M %p")
-        except ValueError:
-            await interaction.response.send_message("❌ Invalid time format. Please use MM/DD/YYYY HH:MM AM/PM format.", ephemeral=True)
-            return
-
-        if scheduled_time < datetime.now():
-            await interaction.response.send_message("⏳ You can't schedule something in the past.", ephemeral=True)
-            return
-
-        scheduled_messages.append({
-            "channel_ids": self.selected_channels,
-            "content": self.message_input.value,
-            "files": [],
-            "timestamp": scheduled_time.isoformat()
-        })
-
-        save_scheduled_messages(scheduled_messages)
-        await interaction.response.send_message(
-            f"✅ Message scheduled for {scheduled_time.strftime('%m/%d/%Y %I:%M %p')}", 
-            ephemeral=True
-        )
-
-class ChannelView(View):
-    def __init__(self, options, is_schedule=False):
-        super().__init__(timeout=60)
-        self.add_item(ChannelSelect(options, is_schedule))
-
 @bot.tree.command(name="postmessage", description="Post a message to selected channels")
-async def post_message(interaction: discord.Interaction):
+@discord.app_commands.describe(
+    attachment="Optional: Add a file, image, or other attachment to your message"
+)
+async def post_message(interaction: discord.Interaction, attachment: discord.Attachment = None):
     allowed_channels = {
         name: cid for name, cid in CHANNELS.items()
         if isinstance((channel := interaction.guild.get_channel(cid)), discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
@@ -140,12 +60,64 @@ async def post_message(interaction: discord.Interaction):
     if not allowed_channels:
         await interaction.response.send_message("⚠️ You don't have permission to post in any configured channels.", ephemeral=True)
         return
+    
+    attachment_file = await attachment.to_file() if attachment else None
+    
+    class MessageModalWithAttachment(discord.ui.Modal):
+        def __init__(self, selected_channels, attachment):
+            super().__init__(title="Message Content")
+            self.selected_channels = selected_channels
+            self.attachment = attachment
+            self.message_input = discord.ui.TextInput(
+                label="Message (optional)",
+                style=discord.TextStyle.paragraph,
+                placeholder="Type your message here...",
+                required=False,
+                max_length=2000
+            )
+            self.add_item(self.message_input)
 
-    view = ChannelView(allowed_channels, is_schedule=False)
+        async def on_submit(self, interaction: discord.Interaction):
+            for channel_id in self.selected_channels:
+                channel = interaction.guild.get_channel(channel_id)
+                if isinstance(channel, discord.TextChannel):
+                    file = await self.attachment.to_file() if self.attachment else None
+                    await channel.send(
+                        content=self.message_input.value or None,
+                        files=[file] if file else None
+                    )
+            await interaction.response.send_message("✅ Message posted successfully!", ephemeral=True)
+
+    class UpdatedChannelSelect(discord.ui.Select):
+        def __init__(self, options, attachment):
+            select_options = [discord.SelectOption(label=name, value=str(cid)) for name, cid in options.items()]
+            super().__init__(
+                placeholder="Select channels to post in...", 
+                min_values=1, 
+                max_values=len(select_options), 
+                options=select_options
+            )
+            self.attachment = attachment
+
+        async def callback(self, interaction: discord.Interaction):
+            selected_channels = [int(v) for v in self.values]
+            modal = MessageModalWithAttachment(selected_channels, self.attachment)
+            await interaction.response.send_modal(modal)
+            self.view.stop()
+
+    class UpdatedChannelView(discord.ui.View):
+        def __init__(self, options, attachment):
+            super().__init__(timeout=60)
+            self.add_item(UpdatedChannelSelect(options, attachment))
+
+    view = UpdatedChannelView(allowed_channels, attachment)
     await interaction.response.send_message("Select channels to post in:", view=view, ephemeral=True)
 
 @bot.tree.command(name="schedulemessage", description="Schedule a message to post later")
-async def schedule_message(interaction: discord.Interaction):
+@discord.app_commands.describe(
+    attachment="Optional: Add a file, image, or other attachment to your message"
+)
+async def schedule_message(interaction: discord.Interaction, attachment: discord.Attachment = None):
     allowed_channels = {
         name: cid for name, cid in CHANNELS.items()
         if isinstance((channel := interaction.guild.get_channel(cid)), discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
@@ -155,7 +127,85 @@ async def schedule_message(interaction: discord.Interaction):
         await interaction.response.send_message("⚠️ You don't have permission to post in any configured channels.", ephemeral=True)
         return
 
-    view = ChannelView(allowed_channels, is_schedule=True)
+    class ScheduleModalWithAttachment(discord.ui.Modal):
+        def __init__(self, selected_channels, attachment):
+            super().__init__(title="Schedule Message")
+            self.selected_channels = selected_channels
+            self.attachment = attachment
+            self.message_input = discord.ui.TextInput(
+                label="Message (optional)",
+                style=discord.TextStyle.paragraph,
+                placeholder="Type your message here...",
+                required=False,
+                max_length=2000
+            )
+            self.time_input = discord.ui.TextInput(
+                label="Time (MM/DD/YYYY HH:MM AM/PM)",
+                style=discord.TextStyle.short,
+                placeholder="e.g., 07/23/2025 05:30 PM",
+                required=True
+            )
+            self.add_item(self.message_input)
+            self.add_item(self.time_input)
+
+        async def on_submit(self, interaction: discord.Interaction):
+            try:
+                scheduled_time = datetime.strptime(self.time_input.value.strip(), "%m/%d/%Y %I:%M %p")
+            except ValueError:
+                await interaction.response.send_message("❌ Invalid time format. Please use MM/DD/YYYY HH:MM AM/PM format.", ephemeral=True)
+                return
+
+            if scheduled_time < datetime.now():
+                await interaction.response.send_message("⏳ You can't schedule something in the past.", ephemeral=True)
+                return
+
+            saved_file = None
+            if self.attachment:
+                temp_dir = "temp_files"
+                os.makedirs(temp_dir, exist_ok=True)
+                file_path = os.path.join(temp_dir, f"{interaction.id}_{self.attachment.filename}")
+                await self.attachment.save(file_path)
+                saved_file = {
+                    "path": file_path,
+                    "filename": self.attachment.filename
+                }
+
+            scheduled_messages.append({
+                "channel_ids": self.selected_channels,
+                "content": self.message_input.value or None,
+                "files": [saved_file] if saved_file else [],
+                "timestamp": scheduled_time.isoformat()
+            })
+
+            save_scheduled_messages(scheduled_messages)
+            await interaction.response.send_message(
+                f"✅ Message scheduled for {scheduled_time.strftime('%m/%d/%Y %I:%M %p')}", 
+                ephemeral=True
+            )
+
+    class UpdatedScheduleChannelSelect(discord.ui.Select):
+        def __init__(self, options, attachment):
+            select_options = [discord.SelectOption(label=name, value=str(cid)) for name, cid in options.items()]
+            super().__init__(
+                placeholder="Select channels to post in...", 
+                min_values=1, 
+                max_values=len(select_options), 
+                options=select_options
+            )
+            self.attachment = attachment
+
+        async def callback(self, interaction: discord.Interaction):
+            selected_channels = [int(v) for v in self.values]
+            modal = ScheduleModalWithAttachment(selected_channels, self.attachment)
+            await interaction.response.send_modal(modal)
+            self.view.stop()
+
+    class UpdatedScheduleChannelView(discord.ui.View):
+        def __init__(self, options, attachment):
+            super().__init__(timeout=60)
+            self.add_item(UpdatedScheduleChannelSelect(options, attachment))
+
+    view = UpdatedScheduleChannelView(allowed_channels, attachment)
     await interaction.response.send_message("Select channels to schedule a post in:", view=view, ephemeral=True)
 
 async def schedule_runner():
@@ -165,10 +215,28 @@ async def schedule_runner():
         to_post = [msg for msg in scheduled_messages if datetime.fromisoformat(msg["timestamp"]) <= now]
 
         for msg in to_post:
+            files = []
+            for file_info in msg.get("files", []):
+                try:
+                    file = discord.File(file_info["path"], filename=file_info["filename"])
+                    files.append(file)
+                except Exception as e:
+                    print(f"Error loading file {file_info['path']}: {e}")
+
             for channel_id in msg["channel_ids"]:
                 channel = bot.get_channel(channel_id)
                 if isinstance(channel, discord.TextChannel):
-                    await channel.send(msg["content"])
+                    try:
+                        await channel.send(content=msg["content"], files=files)
+                    except Exception as e:
+                        print(f"Error sending message to channel {channel_id}: {e}")
+
+            for file_info in msg.get("files", []):
+                try:
+                    os.remove(file_info["path"])
+                except Exception as e:
+                    print(f"Error removing file {file_info['path']}: {e}")
+
             scheduled_messages.remove(msg)
             save_scheduled_messages(scheduled_messages)
 
