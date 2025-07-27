@@ -48,123 +48,115 @@ def save_scheduled_messages(scheduled):
 scheduled_messages = load_scheduled_messages()
 
 class ChannelSelect(Select):
-    def __init__(self, options):
+    def __init__(self, options, is_schedule=False):
         select_options = [discord.SelectOption(label=name, value=str(cid)) for name, cid in options.items()]
         super().__init__(placeholder="Select channels to post in...", min_values=1, max_values=len(select_options), options=select_options)
+        self.is_schedule = is_schedule
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
         if view and isinstance(view, ChannelView):
-            view.selected_channels = [int(v) for v in self.values]
-            await interaction.response.send_message("✅ Channels selected!", ephemeral=True)
+            selected_channels = [int(v) for v in self.values]
+            modal = ScheduleMessageModal(selected_channels) if self.is_schedule else MessageModal(selected_channels)
+            await interaction.response.send_modal(modal)
             view.stop()
 
+class MessageModal(discord.ui.Modal):
+    def __init__(self, selected_channels):
+        super().__init__(title="Message Content")
+        self.selected_channels = selected_channels
+        self.message_input = discord.ui.TextInput(
+            label="Message",
+            style=discord.TextStyle.paragraph,
+            placeholder="Type your message here...",
+            required=True,
+            max_length=2000
+        )
+        self.add_item(self.message_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        for channel_id in self.selected_channels:
+            channel = interaction.guild.get_channel(channel_id)
+            if isinstance(channel, discord.TextChannel):
+                await channel.send(self.message_input.value)
+        await interaction.response.send_message("✅ Message posted successfully!", ephemeral=True)
+
+class ScheduleMessageModal(discord.ui.Modal):
+    def __init__(self, selected_channels):
+        super().__init__(title="Schedule Message")
+        self.selected_channels = selected_channels
+        self.message_input = discord.ui.TextInput(
+            label="Message",
+            style=discord.TextStyle.paragraph,
+            placeholder="Type your message here...",
+            required=True,
+            max_length=2000
+        )
+        self.time_input = discord.ui.TextInput(
+            label="Time (MM/DD/YYYY HH:MM AM/PM)",
+            style=discord.TextStyle.short,
+            placeholder="e.g., 07/23/2025 05:30 PM",
+            required=True
+        )
+        self.add_item(self.message_input)
+        self.add_item(self.time_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            scheduled_time = datetime.strptime(self.time_input.value.strip(), "%m/%d/%Y %I:%M %p")
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid time format. Please use MM/DD/YYYY HH:MM AM/PM format.", ephemeral=True)
+            return
+
+        if scheduled_time < datetime.now():
+            await interaction.response.send_message("⏳ You can't schedule something in the past.", ephemeral=True)
+            return
+
+        scheduled_messages.append({
+            "channel_ids": self.selected_channels,
+            "content": self.message_input.value,
+            "files": [],
+            "timestamp": scheduled_time.isoformat()
+        })
+
+        save_scheduled_messages(scheduled_messages)
+        await interaction.response.send_message(
+            f"✅ Message scheduled for {scheduled_time.strftime('%m/%d/%Y %I:%M %p')}", 
+            ephemeral=True
+        )
+
 class ChannelView(View):
-    def __init__(self, options):
+    def __init__(self, options, is_schedule=False):
         super().__init__(timeout=60)
-        self.selected_channels = []
-        self.add_item(ChannelSelect(options))
+        self.add_item(ChannelSelect(options, is_schedule))
 
 @bot.tree.command(name="postmessage", description="Post a message to selected channels")
 async def post_message(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
     allowed_channels = {
         name: cid for name, cid in CHANNELS.items()
         if isinstance((channel := interaction.guild.get_channel(cid)), discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
     }
 
     if not allowed_channels:
-        await interaction.followup.send("⚠️ You don’t have permission to post in any configured channels.", ephemeral=True)
+        await interaction.response.send_message("⚠️ You don't have permission to post in any configured channels.", ephemeral=True)
         return
 
-    view = ChannelView(allowed_channels)
-    await interaction.followup.send("Select channels to post in:", view=view, ephemeral=True)
-    timeout = await view.wait()
-
-    if not view.selected_channels:
-        await interaction.followup.send("❌ No channels selected or command timed out.", ephemeral=True)
-        return
-
-    await interaction.followup.send("Please type the message you want to post:", ephemeral=True)
-
-    def check(m):
-        return m.author == interaction.user and m.channel == interaction.channel
-
-    try:
-        msg = await bot.wait_for("message", check=check, timeout=120)
-        try:
-            await msg.delete()
-        except discord.Forbidden:
-            await interaction.followup.send("⚠️ I couldn't delete your message — please check my permissions.", ephemeral=True)
-    except asyncio.TimeoutError:
-        await interaction.followup.send("⏰ You took too long to respond.", ephemeral=True)
-        return
-
-    for channel_id in view.selected_channels:
-        channel = interaction.guild.get_channel(channel_id)
-        if isinstance(channel, discord.TextChannel):
-            await channel.send(msg.content, files=[await a.to_file() for a in msg.attachments])
-
-    await interaction.followup.send("✅ Message posted successfully!", ephemeral=True)
+    view = ChannelView(allowed_channels, is_schedule=False)
+    await interaction.response.send_message("Select channels to post in:", view=view, ephemeral=True)
 
 @bot.tree.command(name="schedulemessage", description="Schedule a message to post later")
 async def schedule_message(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
     allowed_channels = {
         name: cid for name, cid in CHANNELS.items()
         if isinstance((channel := interaction.guild.get_channel(cid)), discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
     }
 
     if not allowed_channels:
-        await interaction.followup.send("⚠️ You don’t have permission to post in any configured channels.", ephemeral=True)
+        await interaction.response.send_message("⚠️ You don't have permission to post in any configured channels.", ephemeral=True)
         return
 
-    view = ChannelView(allowed_channels)
-    await interaction.followup.send("Select channels to schedule a post in:", view=view, ephemeral=True)
-    timeout = await view.wait()
-
-    if not view.selected_channels:
-        await interaction.followup.send("❌ No channels selected or command timed out.", ephemeral=True)
-        return
-
-    await interaction.followup.send("Please type the message you want to schedule:", ephemeral=True)
-
-    def check(m):
-        return m.author == interaction.user and m.channel == interaction.channel
-
-    try:
-        msg = await bot.wait_for("message", check=check, timeout=120)
-        try:
-            await msg.delete()
-        except discord.Forbidden:
-            await interaction.followup.send("⚠️ I couldn't delete your message — please check my permissions.", ephemeral=True)
-    except asyncio.TimeoutError:
-        await interaction.followup.send("⏰ You took too long to respond.", ephemeral=True)
-        return
-
-    await interaction.followup.send("Enter the scheduled time in format `MM/DD/YYYY HH:MM AM/PM` (e.g. `07/23/2025 05:30 PM`):", ephemeral=True)
-
-    try:
-        time_msg = await bot.wait_for("message", check=check, timeout=60)
-        scheduled_time = datetime.strptime(time_msg.content.strip(), "%m/%d/%Y %I:%M %p")
-        await time_msg.delete()
-    except (asyncio.TimeoutError, ValueError):
-        await interaction.followup.send("❌ Invalid time format. Please use `MM/DD/YYYY HH:MM AM/PM`, e.g., `07/23/2025 03:45 PM`.", ephemeral=True)
-        return
-
-    if scheduled_time < datetime.now():
-        await interaction.followup.send("⏳ You can't schedule something in the past.", ephemeral=True)
-        return
-
-    scheduled_messages.append({
-        "channel_ids": view.selected_channels,
-        "content": msg.content,
-        "files": [],
-        "timestamp": scheduled_time.isoformat()
-    })
-
-    save_scheduled_messages(scheduled_messages)
-    await interaction.followup.send(f"✅ Message scheduled for {scheduled_time.strftime('%m/%d/%Y %I:%M %p')}", ephemeral=True)
+    view = ChannelView(allowed_channels, is_schedule=True)
+    await interaction.response.send_message("Select channels to schedule a post in:", view=view, ephemeral=True)
 
 async def schedule_runner():
     await bot.wait_until_ready()
