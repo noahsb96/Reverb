@@ -84,6 +84,10 @@ async def post_message(ctx):
 
     try:
         msg = await bot.wait_for("message", check=check, timeout=120)
+        try:
+            await msg.delete()
+        except discord.Forbidden:
+            await ctx.send("⚠️ I couldn't delete your message — please check my permissions.")
     except asyncio.TimeoutError:
         await ctx.send("⏰ You took too long to respond.")
         return
@@ -127,6 +131,10 @@ async def schedule_message(ctx):
 
     try:
         msg = await bot.wait_for("message", check=check, timeout=120)
+        try:
+            await msg.delete()
+        except discord.Forbidden:
+            await ctx.send("⚠️ I couldn't delete your message — please check my permissions.")
     except asyncio.TimeoutError:
         await ctx.send("⏰ You took too long to respond.")
         return
