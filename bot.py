@@ -28,7 +28,7 @@ async def on_ready():
     except Exception as e:
         print(f"Error syncing commands: {e}")
     bot.loop.create_task(schedule_runner())
-    
+
 def load_scheduled_messages():
     if not os.path.exists(SCHEDULED_FILE):
         return []
@@ -77,8 +77,9 @@ async def post_message(interaction: discord.Interaction, attachment: discord.Att
                 channel = interaction.guild.get_channel(channel_id)
                 if isinstance(channel, discord.TextChannel):
                     file = await self.attachment.to_file() if self.attachment else None
+                    content = f"**Message from {interaction.user.display_name}:**\n{self.message_input.value}" if self.message_input.value else f"**Attachment from {interaction.user.display_name}**"
                     await channel.send(
-                        content=self.message_input.value or None,
+                        content=content,
                         files=[file] if file else None
                     )
             await interaction.response.send_message("✅ Message posted successfully!", ephemeral=True)
@@ -170,7 +171,8 @@ async def schedule_message(interaction: discord.Interaction, attachment: discord
                 "channel_ids": self.selected_channels,
                 "content": self.message_input.value or None,
                 "files": [saved_file] if saved_file else [],
-                "timestamp": scheduled_time.isoformat()
+                "timestamp": scheduled_time.isoformat(),
+                "sender_name": interaction.user.display_name
             })
 
             save_scheduled_messages(scheduled_messages)
@@ -223,7 +225,8 @@ async def schedule_runner():
                 channel = bot.get_channel(channel_id)
                 if isinstance(channel, discord.TextChannel):
                     try:
-                        await channel.send(content=msg["content"], files=files)
+                        content = f"**Scheduled message from {msg['sender_name']}:**\n{msg['content']}" if msg['content'] else f"**Scheduled attachment from {msg['sender_name']}**"
+                        await channel.send(content=content, files=files)
                     except Exception as e:
                         print(f"Error sending message to channel {channel_id}: {e}")
 
