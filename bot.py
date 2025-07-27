@@ -12,13 +12,6 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 
 SCHEDULED_FILE = "scheduled.json"
 
-CHANNELS = {
-    'general': 1397412820383043667,
-    'test': 1397442719202410517,
-    'test2': 1397442739838128159,
-    'test3': 1397442760738607164,
-}
-
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -35,6 +28,7 @@ async def on_ready():
     except Exception as e:
         print(f"Error syncing commands: {e}")
     bot.loop.create_task(schedule_runner())
+    
 def load_scheduled_messages():
     if not os.path.exists(SCHEDULED_FILE):
         return []
@@ -53,8 +47,9 @@ scheduled_messages = load_scheduled_messages()
 )
 async def post_message(interaction: discord.Interaction, attachment: discord.Attachment = None):
     allowed_channels = {
-        name: cid for name, cid in CHANNELS.items()
-        if isinstance((channel := interaction.guild.get_channel(cid)), discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
+        channel.name: channel.id
+        for channel in interaction.guild.channels
+        if isinstance(channel, discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
     }
 
     if not allowed_channels:
@@ -119,8 +114,9 @@ async def post_message(interaction: discord.Interaction, attachment: discord.Att
 )
 async def schedule_message(interaction: discord.Interaction, attachment: discord.Attachment = None):
     allowed_channels = {
-        name: cid for name, cid in CHANNELS.items()
-        if isinstance((channel := interaction.guild.get_channel(cid)), discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
+        channel.name: channel.id
+        for channel in interaction.guild.channels
+        if isinstance(channel, discord.TextChannel) and channel.permissions_for(interaction.user).send_messages
     }
 
     if not allowed_channels:
