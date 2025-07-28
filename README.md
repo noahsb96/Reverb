@@ -62,14 +62,36 @@ Reverb is a Discord bot that allows server administrators and moderators to effi
 ```
 reverb/
 ├── src/
+│   ├── __init__.py
 │   ├── bot.py           # Main bot implementation
 │   ├── cogs/            # Command modules
+│   │   ├── __init__.py
+│   │   ├── base.py      # Base cog functionality
+│   │   ├── help.py      # Help command
+│   │   ├── message.py   # Message commands
+│   │   └── schedule.py  # Scheduling commands
 │   ├── ui/              # UI components
+│   │   ├── __init__.py
+│   │   ├── base.py      # Base UI classes
+│   │   ├── modals.py    # Modal dialogs
+│   │   ├── select.py    # Selection menus
+│   │   └── views.py     # View implementations
 │   └── utils/           # Utility functions
-├── data/               # Data storage
-├── temp_files/         # Temporary file storage
-├── requirements.txt    # Dependencies
-└── launch.py          # Entry point
+│       ├── __init__.py
+│       ├── embeds.py    # Embed creators
+│       ├── logger.py    # Logging system
+│       ├── scheduler.py # Message scheduler
+│       └── storage.py   # Data persistence
+├── data/                # Data storage
+├── logs/                # Log files
+├── temp_files/          # Temporary file storage
+├── .env                 # Environment variables
+├── .env.example         # Environment template
+├── .gitignore          # Git ignore rules
+├── README.md           # Documentation
+├── bot.py              # Entry point
+├── launch.py           # Alternative entry
+└── requirements.txt    # Dependencies
 ```
 
 ### Setting Up Development Environment
