@@ -9,7 +9,10 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from .utils.logger import setup_logger, get_logger
 from .utils.scheduler import ScheduleRunner
+
+logger = get_logger('bot')
 
 
 class ReverbBot(commands.Bot):
@@ -27,36 +30,55 @@ class ReverbBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         """Initialize the bot's extensions and sync commands."""
+        logger.info("Setting up bot extensions and commands")
+        
         for ext in self.initial_extensions:
             try:
                 await self.load_extension(f"src.cogs.{ext}")
-                print(f"Loaded extension: {ext}")
+                logger.info(f"Loaded extension: {ext}")
             except Exception as e:
-                print(f"Failed to load extension {ext}: {e}")
+                logger.error(f"Failed to load extension {ext}: {e}", exc_info=True)
 
         try:
             synced = await self.tree.sync()
-            print(f"Synced {len(synced)} command(s)")
+            logger.info(f"Synced {len(synced)} command(s)")
         except Exception as e:
-            print(f"Error syncing commands: {e}")
+            logger.error(f"Error syncing commands: {e}", exc_info=True)
 
+        logger.info("Starting scheduler")
         await self.scheduler.start()
 
     async def on_ready(self):
         """Called when the bot is ready to start."""
-        print(f"{self.user} is ready!")
+        logger.info(f"Bot {self.user} is ready!")
+        
+        # Log some bot statistics
+        guild_count = len(self.guilds)
+        channel_count = sum(len(guild.channels) for guild in self.guilds)
+        logger.info(f"Connected to {guild_count} guilds with {channel_count} channels total")
 
 
 def run_bot():
     """Initialize and run the bot."""
     load_dotenv()
-    TOKEN = os.getenv('DISCORD_TOKEN')
     
+    # Initialize logging
+    debug_mode = os.getenv('DEBUG', 'false').lower() == 'true'
+    setup_logger(debug_mode)
+    
+    TOKEN = os.getenv('DISCORD_TOKEN')
     if TOKEN is None:
+        logger.error("DISCORD_TOKEN environment variable is not set")
         raise ValueError("DISCORD_TOKEN environment variable is not set")
     
-    bot = ReverbBot()
-    bot.run(TOKEN)
+    try:
+        logger.info("Initializing bot")
+        bot = ReverbBot()
+        logger.info("Starting bot")
+        bot.run(TOKEN)
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":
