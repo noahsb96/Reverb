@@ -35,25 +35,46 @@ class MessageModalWithAttachment(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            # Defer the response first to prevent interaction timeout
             await interaction.response.defer(ephemeral=True)
+            
+            success_channels = []
+            failed_channels = []
             
             for channel_id in self.selected_channels:
                 channel = interaction.guild.get_channel(channel_id)
-                if isinstance(channel, discord.TextChannel):
+                if not isinstance(channel, discord.TextChannel):
+                    failed_channels.append(f"{channel.name} (invalid channel type)")
+                    continue
+                    
+                if not channel.permissions_for(interaction.user).send_messages:
+                    failed_channels.append(f"{channel.name} (no permission)")
+                    continue
+                
+                try:
                     content = f"**Message from {interaction.user.display_name}:**\n{self.message_input.value}" if self.message_input.value else f"**Attachment from {interaction.user.display_name}**"
                     file = await self.attachment.to_file() if self.attachment else None
                     await channel.send(
                         content=content,
                         files=[file] if file else None
                     )
+                    success_channels.append(channel.name)
+                except discord.Forbidden:
+                    failed_channels.append(f"{channel.name} (no permission)")
+                except Exception as e:
+                    failed_channels.append(f"{channel.name} (error: {str(e)})")
             
-            # Use followup instead of response
-            await interaction.followup.send("✅ Message posted successfully!", ephemeral=True)
+            if success_channels and not failed_channels:
+                await interaction.followup.send("✅ Message posted successfully to all channels!", ephemeral=True)
+            elif success_channels and failed_channels:
+                message = "✅ Message posted to: " + ", ".join(success_channels) + "\n"
+                message += "❌ Failed to post to: " + ", ".join(failed_channels)
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Failed to post message to any channels: " + ", ".join(failed_channels), ephemeral=True)
+                
         except Exception as e:
-            # If something goes wrong, try to notify the user
             try:
-                await interaction.followup.send(f"❌ An error occurred while posting the message: {str(e)}", ephemeral=True)
+                await interaction.followup.send(f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
             except:
                 print(f"Error in MessageModalWithAttachment: {str(e)}")
 
@@ -84,47 +105,78 @@ class ScheduleModalWithAttachment(discord.ui.Modal):
         import os
 
         try:
-            scheduled_time = datetime.strptime(self.time_input.value.strip(), "%m/%d/%Y %I:%M %p")
-        except ValueError:
-            await interaction.response.send_message("❌ Invalid time format. Please use MM/DD/YYYY HH:MM AM/PM format.", ephemeral=True)
-            return
+            await interaction.response.defer(ephemeral=True)
+            
+            try:
+                scheduled_time = datetime.strptime(self.time_input.value.strip(), "%m/%d/%Y %I:%M %p")
+            except ValueError:
+                await interaction.followup.send("❌ Invalid time format. Please use MM/DD/YYYY HH:MM AM/PM format.", ephemeral=True)
+                return
 
-        current_time = datetime.now()
+            current_time = datetime.now()
+            if scheduled_time < current_time:
+                await interaction.followup.send("⏳ You can't schedule something in the past.", ephemeral=True)
+                return
 
-        if scheduled_time < current_time:
-            await interaction.response.send_message("⏳ You can't schedule something in the past.", ephemeral=True)
-            return
+            valid_channels = []
+            invalid_channels = []
+            
+            for channel_id in self.selected_channels:
+                channel = interaction.guild.get_channel(channel_id)
+                if not isinstance(channel, discord.TextChannel):
+                    invalid_channels.append(f"{channel.name} (invalid channel type)")
+                    continue
+                    
+                if not channel.permissions_for(interaction.user).send_messages:
+                    invalid_channels.append(f"{channel.name} (no permission)")
+                    continue
+                    
+                valid_channels.append(channel_id)
+            
+            if not valid_channels:
+                await interaction.followup.send(
+                    f"❌ Cannot schedule message: No valid channels with proper permissions.\nFailed channels: {', '.join(invalid_channels)}", 
+                    ephemeral=True
+                )
+                return
 
-        saved_file = None
-        if self.attachment:
-            temp_dir = "temp_files"
-            os.makedirs(temp_dir, exist_ok=True)
-            file_path = os.path.join(temp_dir, f"{interaction.id}_{self.attachment.filename}")
-            await self.attachment.save(file_path)
-            saved_file = {
-                "path": file_path,
-                "filename": self.attachment.filename
+            saved_file = None
+            if self.attachment:
+                temp_dir = "temp_files"
+                os.makedirs(temp_dir, exist_ok=True)
+                file_path = os.path.join(temp_dir, f"{interaction.id}_{self.attachment.filename}")
+                await self.attachment.save(file_path)
+                saved_file = {
+                    "path": file_path,
+                    "filename": self.attachment.filename
+                }
+
+            message = {
+                "channel_ids": valid_channels,
+                "content": self.message_input.value or None,
+                "files": [saved_file] if saved_file else [],
+                "timestamp": scheduled_time.isoformat(),
+                "sender_name": interaction.user.display_name
             }
-
-        message = {
-            "channel_ids": self.selected_channels,
-            "content": self.message_input.value or None,
-            "files": [saved_file] if saved_file else [],
-            "timestamp": scheduled_time.isoformat(),
-            "sender_name": interaction.user.display_name
-        }
-        add_scheduled_message(message)
-        await interaction.response.send_message(
-            f"✅ Message scheduled for {scheduled_time.strftime('%m/%d/%Y %I:%M %p')}", 
-            ephemeral=True
-        )
+            add_scheduled_message(message)
+            
+            response = f"✅ Message scheduled for {scheduled_time.strftime('%m/%d/%Y %I:%M %p')}"
+            if invalid_channels:
+                response += f"\n⚠️ Note: Message will not be sent to: {', '.join(invalid_channels)}"
+            
+            await interaction.followup.send(response, ephemeral=True)
+            
+        except Exception as e:
+            try:
+                await interaction.followup.send(f"❌ An error occurred while scheduling the message: {str(e)}", ephemeral=True)
+            except:
+                print(f"Error in ScheduleModalWithAttachment: {str(e)}")
 
 class UpdatedChannelSelect(discord.ui.Select):
     def __init__(self, options: Dict[str, int], attachment, is_schedule: bool):
-        # Create select options from channel list
         select_options = [
             discord.SelectOption(
-                label=name[:25], # Discord has a 25-character limit for labels
+                label=name[:25],
                 value=str(cid),
                 default=False
             )
@@ -148,13 +200,12 @@ class UpdatedChannelSelect(discord.ui.Select):
 
 class UpdatedChannelView(View):
     def __init__(self, options: Dict[str, int], attachment, is_schedule: bool = False):
-        super().__init__(timeout=180)  # 3 minute timeout
+        super().__init__(timeout=180)
         self.all_options = options
         self.attachment = attachment
         self.is_schedule = is_schedule
         self.update_channel_list()
         
-        # Add search and clear buttons
         self.add_item(discord.ui.Button(
             label="🔍 Search Channels",
             style=discord.ButtonStyle.secondary,
@@ -169,12 +220,10 @@ class UpdatedChannelView(View):
         ))
 
     def update_channel_list(self, search_term: str = ""):
-        # Remove old select menus (keep buttons)
         for item in self.children[:]:
             if isinstance(item, UpdatedChannelSelect):
                 self.remove_item(item)
 
-        # Filter channels based on search term
         filtered_options = {
             name: cid
             for name, cid in self.all_options.items()
@@ -183,7 +232,7 @@ class UpdatedChannelView(View):
 
         if filtered_options:
             select_menu = UpdatedChannelSelect(filtered_options, self.attachment, self.is_schedule)
-            select_menu.row = 1  # Put select menu below buttons
+            select_menu.row = 1
             self.add_item(select_menu)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
