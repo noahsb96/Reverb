@@ -101,7 +101,7 @@ class ScheduleModalWithAttachment(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         from datetime import datetime
-        from utils.storage import add_scheduled_message
+        from src.utils.storage import add_scheduled_message
         import os
 
         try:

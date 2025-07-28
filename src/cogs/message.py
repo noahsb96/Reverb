@@ -1,19 +1,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from ..src.ui.views import ChannelView
+from ..ui.views import ChannelView
 
-class MessageCommands(commands.Cog):
+from .base import BaseCog
+
+class MessageCommands(BaseCog):
     def __init__(self, bot):
-        self.bot = bot
-
-    def _get_allowed_channels(self, interaction: discord.Interaction):
-        return {
-            channel.name: channel.id
-            for channel in interaction.guild.channels
-            if isinstance(channel, discord.TextChannel) and 
-            channel.permissions_for(interaction.user).send_messages
-        }
+        super().__init__(bot)
 
     @app_commands.command(name="postmessage", description="Post a message to selected channels")
     @app_commands.describe(

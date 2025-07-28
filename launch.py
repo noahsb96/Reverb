@@ -1,4 +1,4 @@
-"""Main module for running the Reverb Discord bot."""
+"""Launch script for the Reverb Discord bot."""
 
 from src.bot import run_bot
 

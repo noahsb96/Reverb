@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from ..src.utils.embeds import create_help_embed
+from ..utils.embeds import create_help_embed
 
 class HelpCommands(commands.Cog):
     def __init__(self, bot):

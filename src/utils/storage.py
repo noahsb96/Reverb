@@ -1,8 +1,15 @@
+"""Storage manager for scheduled messages."""
+
 import json
-import os
+from pathlib import Path
 from typing import List, Dict, Any
 
-SCHEDULED_FILE = "scheduled.json"
+# Use Path for better cross-platform path handling
+DATA_DIR = Path("data")
+SCHEDULED_FILE = DATA_DIR / "scheduled.json"
+
+# Ensure data directory exists
+DATA_DIR.mkdir(exist_ok=True)
 
 class ScheduleManager:
     def __init__(self):
@@ -10,11 +17,10 @@ class ScheduleManager:
         self.load_messages()
 
     def load_messages(self):
-        """Load scheduled messages from file"""
-        if os.path.exists(SCHEDULED_FILE):
+        """Load scheduled messages from file."""
+        if SCHEDULED_FILE.exists():
             try:
-                with open(SCHEDULED_FILE, 'r') as f:
-                    self._messages = json.load(f)
+                self._messages = json.loads(SCHEDULED_FILE.read_text())
             except json.JSONDecodeError:
                 print("Error loading scheduled messages file")
                 self._messages = []
@@ -22,9 +28,8 @@ class ScheduleManager:
             self._messages = []
 
     def save_messages(self):
-        """Save messages to file"""
-        with open(SCHEDULED_FILE, 'w') as f:
-            json.dump(self._messages, f, indent=2)
+        """Save messages to file."""
+        SCHEDULED_FILE.write_text(json.dumps(self._messages, indent=2))
 
     def add_message(self, message: Dict[str, Any]):
         """Add a new scheduled message"""

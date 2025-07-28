@@ -1,19 +1,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from ..src.ui.views import ChannelView
+from ..ui.views import ChannelView
 
-class ScheduleCommands(commands.Cog):
+from .base import BaseCog
+
+class ScheduleCommands(BaseCog):
     def __init__(self, bot):
-        self.bot = bot
-
-    def _get_allowed_channels(self, interaction: discord.Interaction):
-        return {
-            channel.name: channel.id
-            for channel in interaction.guild.channels
-            if isinstance(channel, discord.TextChannel) and 
-            channel.permissions_for(interaction.user).send_messages
-        }
+        super().__init__(bot)
 
     @app_commands.command(name="schedulemessage", description="Schedule a message to post later")
     @app_commands.describe(
