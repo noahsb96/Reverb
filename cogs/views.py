@@ -1,5 +1,5 @@
 import discord
-from discord.ui import View, Select
+from discord.ui import View
 from typing import Dict, List
 
 class ChannelSearchModal(discord.ui.Modal):
@@ -173,30 +173,86 @@ class ScheduleModalWithAttachment(discord.ui.Modal):
                 print(f"Error in ScheduleModalWithAttachment: {str(e)}")
 
 class UpdatedChannelSelect(discord.ui.Select):
-    def __init__(self, options: Dict[str, int], attachment, is_schedule: bool):
-        select_options = [
-            discord.SelectOption(
-                label=name[:25],
-                value=str(cid),
-                default=False
-            )
-            for name, cid in options.items()
-        ]
-        
-        super().__init__(
-            placeholder="Select channels to post in...",
-            min_values=1,
-            max_values=len(select_options),
-            options=select_options
-        )
+    def __init__(self, options: Dict[str, int], attachment, is_schedule: bool, selected_values: List[str] = None):
         self.attachment = attachment
         self.is_schedule = is_schedule
         self.all_options = options
+        self._selected = selected_values or []
+        
+        filtered_options = []
+        name_by_id = {str(cid): name for name, cid in options.items()}
+        
+        for name, cid in options.items():
+            str_cid = str(cid)
+            is_selected = str_cid in self._selected
+            
+            option = discord.SelectOption(
+                label=name[:25],
+                value=str_cid,
+                default=is_selected
+            )
+            filtered_options.append(option)
+            
+        if self._selected:
+            selected_names = [name_by_id[val][:15] for val in self._selected if val in name_by_id]
+            if len(selected_names) > 2:
+                placeholder = f"Selected: {selected_names[0]} +{len(selected_names)-1} more"
+            elif selected_names:
+                placeholder = f"Selected: {', '.join(selected_names)}"
+            else:
+                placeholder = "Select channels to post in..."
+        else:
+            placeholder = "Select channels to post in..."
+        
+        super().__init__(
+            placeholder=placeholder,
+            min_values=0,
+            max_values=len(filtered_options),
+            options=filtered_options
+        )
+
+    def _update_select_state(self):
+        for option in self.options:
+            option.default = option.value in self._selected
 
     async def callback(self, interaction: discord.Interaction):
-        selected_channels = [int(v) for v in self.values]
-        modal = ScheduleModalWithAttachment(selected_channels, self.attachment) if self.is_schedule else MessageModalWithAttachment(selected_channels, self.attachment)
-        await interaction.response.send_modal(modal)
+        visible_options = {opt.value for opt in self.options}
+        preserved_selections = [val for val in self.view.selected_values if val not in visible_options]
+        current_selections = list(self.values)
+        self._selected = preserved_selections + current_selections
+        self.view.selected_values = self._selected
+        self._update_select_state()
+        name_by_id = {str(cid): name for name, cid in self.all_options.items()}
+        selected_names = [name_by_id[val][:15] for val in self._selected if val in name_by_id]
+        if len(selected_names) > 2:
+            self.placeholder = f"Selected: {selected_names[0]} +{len(selected_names)-1} more"
+        elif selected_names:
+            self.placeholder = f"Selected: {', '.join(selected_names)}"
+        else:
+            self.placeholder = "Select channels to post in..."
+        
+        confirm_button = next(
+            (item for item in self.view.children if isinstance(item, discord.ui.Button) and item.custom_id == "confirm"),
+            None
+        )
+        
+        if confirm_button:
+            if self._selected:
+                confirm_button.disabled = False
+                if len(self._selected) > 1:
+                    confirm_button.label = f"Confirm ({len(self._selected)} selected)"
+                elif len(self._selected) == 1:
+                    full_name_by_id = {str(cid): name for name, cid in self.view.all_options.items()}
+                    channel_name = full_name_by_id.get(self._selected[0], "Unknown")[:15]
+                    confirm_button.label = f"Confirm: {channel_name}"
+                else:
+                    confirm_button.disabled = True
+                    confirm_button.label = "Confirm Selection"
+            else:
+                confirm_button.disabled = True
+                confirm_button.label = "Confirm Selection"
+        
+        await interaction.response.edit_message(view=self.view)
 
 class UpdatedChannelView(View):
     def __init__(self, options: Dict[str, int], attachment, is_schedule: bool = False):
@@ -204,7 +260,7 @@ class UpdatedChannelView(View):
         self.all_options = options
         self.attachment = attachment
         self.is_schedule = is_schedule
-        self.update_channel_list()
+        self.selected_values = []
         
         self.add_item(discord.ui.Button(
             label="🔍 Search Channels",
@@ -218,6 +274,16 @@ class UpdatedChannelView(View):
             custom_id="clear",
             row=0
         ))
+        
+        self.add_item(discord.ui.Button(
+            label="Confirm Selection",
+            style=discord.ButtonStyle.primary,
+            custom_id="confirm",
+            row=2,
+            disabled=True
+        ))
+        
+        self.update_channel_list()
 
     def update_channel_list(self, search_term: str = ""):
         for item in self.children[:]:
@@ -231,16 +297,47 @@ class UpdatedChannelView(View):
         }
 
         if filtered_options:
-            select_menu = UpdatedChannelSelect(filtered_options, self.attachment, self.is_schedule)
+            select_menu = UpdatedChannelSelect(
+                filtered_options, 
+                self.attachment, 
+                self.is_schedule,
+                selected_values=self.selected_values
+            )
             select_menu.row = 1
             self.add_item(select_menu)
 
+        confirm_button = next(
+            (item for item in self.children if isinstance(item, discord.ui.Button) and item.custom_id == "confirm"),
+            None
+        )
+        
+        if confirm_button:
+            if self.selected_values:
+                confirm_button.disabled = False
+                confirm_button.label = f"Confirm ({len(self.selected_values)} selected)"
+            else:
+                confirm_button.disabled = True
+                confirm_button.label = "Confirm Selection"
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.data["custom_id"] == "search":
+            select_menu = next((item for item in self.children if isinstance(item, UpdatedChannelSelect)), None)
+            if select_menu and select_menu.values:
+                self.selected_values = select_menu.values
             await interaction.response.send_modal(ChannelSearchModal(self))
+            
         elif interaction.data["custom_id"] == "clear":
-            self.update_channel_list()
+            self.update_channel_list("")
             await interaction.response.edit_message(view=self)
+            
+        elif interaction.data["custom_id"] == "confirm":
+            if self.selected_values:
+                selected_channels = [int(v) for v in self.selected_values]
+                modal = ScheduleModalWithAttachment(selected_channels, self.attachment) if self.is_schedule else MessageModalWithAttachment(selected_channels, self.attachment)
+                await interaction.response.send_modal(modal)
+            else:
+                await interaction.response.send_message("Please select at least one channel first.", ephemeral=True)
+        
         return True
 
 
