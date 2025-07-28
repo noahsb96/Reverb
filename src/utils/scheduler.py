@@ -45,7 +45,6 @@ class ScheduleRunner:
                                 content = f"**Scheduled message from {msg['sender_name']}:**\n{msg['content']}" if msg['content'] else f"**Scheduled attachment from {msg['sender_name']}**"
                                 await channel.send(content=content, files=channel_files)
 
-                        # Clean up files after sending
                         for file_info in msg.get("files", []):
                             try:
                                 os.remove(file_info["path"])
@@ -57,12 +56,11 @@ class ScheduleRunner:
                     except Exception as e:
                         print(f"Error processing scheduled message: {e}")
 
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(60)
         
         except asyncio.CancelledError:
             return
         except Exception as e:
             print(f"Schedule runner encountered an error: {e}")
-            # Attempt to restart the task
             self._task = None
             await self.start()
